@@ -1,5 +1,30 @@
 # ML Fundamentals — FLOPs, MLP, Attention
 
+## The Evergreen Stack
+
+Models change every 6 months. These four do not:
+
+```
+Attention       — how models focus and relate information
+Kernels         — low-level GPU math ops (CUDA, cuDNN, Flash Attention)
+Optimization    — how models learn (SGD, Adam, learning rate schedules)
+GPUs            — the hardware everything runs on
+```
+
+### Why each is durable
+
+| Fundamental | Why it won't go away |
+|-------------|----------------------|
+| **Attention** | Every serious architecture since 2017 uses it; MoE, SSMs etc. still build on or compete with it |
+| **Kernels** | Raw compute is always the bottleneck; writing fast GPU kernels = direct speed gains regardless of model |
+| **Optimization** | You always need to move loss downhill; Adam variants dominate but the math is the same |
+| **GPUs** | Training and inference run here; understanding memory hierarchy, bandwidth, and parallelism is timeless |
+
+> Learn the model of the week and you're current for a month. Learn these four and you can read any paper from 2017–2035.
+
+---
+
+
 ## FLOPs (Floating Point Operations)
 
 A measure of compute. One FLOP = one addition, multiplication, or similar math operation on a decimal number.
