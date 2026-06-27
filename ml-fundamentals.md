@@ -98,3 +98,52 @@ Just matrix multiplications — no activation function, no weights-per-neuron.
 | MLP (neurons) | Process that focused info | Brain thinking about it |
 
 Both attention and MLP cost FLOPs — just different math.
+
+---
+
+## SwiGLU (Swish-Gated Linear Unit)
+
+An **activation function** used inside the MLP layer of modern transformers (LLaMA, PaLM, Gemini).
+
+### The MLP neuron recap:
+
+```
+output = activation(w * x)
+```
+
+The `activation` adds non-linearity. Options:
+- **ReLU** — `max(0, x)` — kills negative values dead
+- **GELU** — smoother ReLU
+- **SwiGLU** — newer, works better in practice
+
+### What SwiGLU does differently:
+
+Two paths instead of one, then multiply them:
+
+```
+SwiGLU(x) = Swish(W1 * x)  ×  (W2 * x)
+```
+
+- **Left path** — `Swish(W1 * x)` — acts as a gate (values between 0 and 1)
+- **Right path** — `W2 * x` — the actual information
+- **Multiply** — gate controls how much info passes through
+
+The gate learns to **open or close** for each piece of information.
+
+### Analogy:
+
+> Right path = water flowing through a pipe
+> Left path = a valve controlling the flow
+> SwiGLU = valve × water
+
+### Where it's used:
+
+| Activation | Used in |
+|------------|---------|
+| ReLU | Old transformers, ResNets |
+| GELU | GPT-2, BERT |
+| SwiGLU | LLaMA, PaLM, Gemini |
+
+Empirically SwiGLU trains to **lower loss** with the same compute. The theory of why is still fuzzy.
+
+> SwiGLU is a smarter activation inside MLP neurons — uses a learned gate to control which information flows through, instead of a fixed math function.
