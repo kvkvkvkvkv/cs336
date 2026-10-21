@@ -172,3 +172,86 @@ The gate learns to **open or close** for each piece of information.
 Empirically SwiGLU trains to **lower loss** with the same compute. The theory of why is still fuzzy.
 
 > SwiGLU is a smarter activation inside MLP neurons — uses a learned gate to control which information flows through, instead of a fixed math function.
+
+---
+
+## Optimistic Locking vs CAS
+
+**CAS (Compare-And-Swap)** is a *primitive*: one atomic CPU instruction (`LOCK CMPXCHG` on x86) that says "if the value at this address is still X, set it to Y; otherwise fail."
+
+**Optimistic locking** is a *strategy*: don't lock while you work; at write time, check nobody changed the data since you read it. If someone did, retry or abort.
+
+> Optimistic locking is the idea. CAS is one way to implement it, at the memory level.
+
+### Same pattern, different layers:
+
+| Layer | Mechanism | Fails how |
+|-------|-----------|-----------|
+| CPU / memory | `AtomicLong.compareAndSet(expected, new)` | returns `false` |
+| Database | `UPDATE ... SET version = v+1 WHERE id = ? AND version = v` | 0 rows updated → `OptimisticLockException` (JPA `@Version`) |
+| Redis | `WATCH key` + `MULTI/EXEC` | `EXEC` returns nil |
+| DynamoDB / etcd | conditional write / txn on revision | condition check fails |
+
+The DB version check *is* a CAS — on a row instead of a memory word.
+
+### Key differences:
+
+| | CAS | Optimistic locking (DB) |
+|--|-----|-----|
+| Scope | one memory word | a whole row / entity (many fields) |
+| Cost of a failed attempt | nanoseconds, spin & retry | a DB round trip, maybe redo business logic |
+| ABA problem | yes — value goes A→B→A, CAS wrongly succeeds; fix with `AtomicStampedReference` | no — version only increments, never repeats |
+
+### When it breaks down:
+Both assume **low contention**. Under heavy contention, most attempts fail and retry → a retry storm that wastes more than a lock would.
+
+- Low contention → optimistic
+- High contention on one row → pessimistic (`SELECT ... FOR UPDATE`) or **single writer**
+
+### Trading example (CoinDCX):
+- Normal user's wallet debit: `UPDATE wallet SET balance = balance - 100, version = version + 1 WHERE user_id = ? AND version = ? AND balance >= 100` — rare conflicts, optimistic is fine.
+- Market maker's account, thousands of updates/sec: optimistic retries explode. Route all of that account's updates to one thread (e.g. Kafka partition keyed by account), so there's no contention at all. That's why matching engines are single-writer.
+
+> CAS = hardware "check-then-set" on one value. Optimistic locking = the same check-then-set applied to data at any layer, usually with a version number.
+
+---
+
+## BPE (Byte Pair Encoding) — the tokenizer
+
+**What it does:** turns text into a list of integer IDs (tokens) that the model can consume. It decides *how to chop text into pieces*.
+
+### The problem it solves:
+| Approach | Problem |
+|---|---|
+| One token per **word** | Vocab explodes (millions), and unseen words ("CoinDCX", typos) → `<UNK>` |
+| One token per **byte/char** | Never unknown, but sequences get very long → attention is O(n²), so expensive |
+| **BPE** (subwords) | Middle ground: common words = 1 token, rare words = a few pieces, nothing is ever unknown |
+
+### Training (learning the merges):
+1. Start with the 256 possible bytes as the vocab. Every string can be written in bytes, so nothing is ever unknown.
+2. Count every adjacent pair across the corpus.
+3. Take the most frequent pair, e.g. (`t`, `h`), and turn it into a new token `th`. Write down the merge rule.
+4. Replace that pair everywhere, recount, repeat.
+5. Stop once vocab hits your target size (GPT-2: ~50k; CS336 TinyStories: 10k).
+
+Output = **vocab** (id → bytes) + **ordered merge list**.
+
+Tiny example, corpus `"low lower lowest"`:
+- `l o` most frequent → merge `lo`
+- `lo w` → merge `low`
+- now `low` is a single token; `lower` = `low` + `e` + `r`, and so on.
+
+### Encoding (using it on new text):
+Turn the text into bytes, then apply the learned merges **in the order they were learned**. Then map each piece to its ID.
+
+### Pre-tokenization (important detail):
+Before counting, split the text with a regex into word-like chunks (GPT-2 pattern) and **never merge across chunk boundaries**. Otherwise you'd get junk tokens like `dog.` vs `dog!` vs `dog?`. Leading spaces stick to words: `" the"` is a token.
+
+### Why it matters:
+- Context length, cost, and pricing are all counted in **tokens**, not words. Roughly 1 token ≈ 4 English chars.
+- Weird LLM failures come from tokenization: counting letters in "strawberry", arithmetic (numbers get split strangely), and non-English text costing 2–5× more tokens.
+
+### Systems analogy:
+Like building a compression dictionary (LZW): frequent patterns get short codes. BPE was literally a compression algorithm first (1994).
+
+> BPE = start from bytes, repeatedly glue together the most frequent adjacent pair. You end up with a vocab where common stuff is one token and rare stuff is a few pieces, and nothing is ever unknown.
